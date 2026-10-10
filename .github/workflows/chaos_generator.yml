@@ -1,14 +1,14 @@
-name: Akira-Frontier Autonomous Cloud Engine
+name: Akira-Frontier Dual Cloud Engine (Drive + HF)
 
 on:
-  workflow_dispatch: # টার্মাক্স থেকে সরাসরি ট্রিগার করার জন্য
+  workflow_dispatch:
   push:
     branches: [ main ]
 
 jobs:
-  run-engine:
+  run-dual-engine:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # সর্বোচ্চ ৬ ঘণ্টা একটানা চলবে
+    timeout-minutes: 360
 
     steps:
       - name: Checkout Code
@@ -22,40 +22,52 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
+      - name: Install Toolchain & Rclone
         run: |
           sudo apt-get update
-          sudo apt-get install -y zstd
+          sudo apt-get install -y zstd rclone
           pip install huggingface_hub
+
+      - name: Configure Rclone for Google Drive
+        env:
+          RCLONE_CONF_DATA: ${{ secrets.RCLONE_CONF }}
+        run: |
+          mkdir -p ~/.config/rclone
+          echo "$RCLONE_CONF_DATA" > ~/.config/rclone/rclone.conf
 
       - name: Build Optimized Release Binary
         run: |
           cargo build --release
 
-      - name: Run Engine & Autonomous Push to Hugging Face
+      - name: Run Engine & Dual Push (Google Drive + Hugging Face)
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          # ৪টি সিপিইউ কোরে ইঞ্জিন ব্যাকগ্রাউন্ডে লঞ্চ
+          # ইঞ্জিন ব্যাকগ্রাউন্ডে লঞ্চ
           ./target/release/akira-frontier --universes 4 > engine_run.log 2>&1 &
-          ENGINE_PID=$!
-          echo "[+] Engine launched with PID $ENGINE_PID"
+          echo "[+] Akira-Frontier Engine launched in GitHub Cloud."
 
-          # পাইথনে অটোনোমাস ওয়াচডগ স্ক্রিপ্ট তৈরি ও রান
+          # ডুয়াল সিঙ্ক ওয়াচডগ স্ক্রিপ্ট
           python3 - << 'PYEOF'
           import os, time, subprocess
           from huggingface_hub import HfApi
 
-          HF_TOKEN = os.environ.get("HF_TOKEN")
+          raw_token = os.environ.get("HF_TOKEN", "")
+          hf_token = raw_token.strip() if raw_token else None
+
           REPO_ID = "aquamarine-hoshino170/akira-frontier-115d"
           TARGET_FILE = "found.jsonl"
-          THRESHOLD = 50 * 1024 * 1024 # প্রতি ৫০ MB পর পর আপলোড
+          DRIVE_REMOTE = "aqua:AkiraBackup/chunks"
+          THRESHOLD = 50 * 1024 * 1024  # 50 MB
 
-          api = HfApi(token=HF_TOKEN)
+          if not hf_token:
+              print("⚠️ WARNING: HF_TOKEN is empty or not found in Secrets! Skipping HF upload, focusing on Drive.")
+          else:
+              print("✅ HF_TOKEN detected successfully.")
+
           os.makedirs("chunks_out", exist_ok=True)
-
-          # রানটাইম লুপ (সর্বোচ্চ ৫.৫ ঘণ্টা ব্যাকগ্রাউন্ডে চলবে)
           start_time = time.time()
+
           while time.time() - start_time < 19800:
               if os.path.exists(TARGET_FILE):
                   size = os.path.getsize(TARGET_FILE)
@@ -64,19 +76,33 @@ jobs:
                       snap = f"snap_{ts}.jsonl"
                       zst_file = f"chunks_out/chunk_{ts}.tar.zst"
 
+                      # ১. রোটেশন ও কম্প্রেশন
                       os.rename(TARGET_FILE, snap)
                       open(TARGET_FILE, 'a').close()
-
                       subprocess.run(f"tar -cf - {snap} | zstd -19 -o {zst_file}", shell=True)
                       os.remove(snap)
 
-                      print(f"[+] Pushing chunk {zst_file} to Hugging Face...")
-                      api.upload_file(
-                          path_or_fileobj=zst_file,
-                          path_in_repo=f"chunks/chunk_{ts}.tar.zst",
-                          repo_id=REPO_ID,
-                          repo_type="dataset"
-                      )
+                      # ২. Google Drive ব্যাকআপ
+                      print(f"[+] Syncing {zst_file} to Google Drive...")
+                      subprocess.run(f"rclone copy {zst_file} {DRIVE_REMOTE}/", shell=True)
+
+                      # ৩. Hugging Face ব্যাকআপ (টোকেন থাকলে আপলোড করবে)
+                      if hf_token:
+                          print(f"[+] Syncing {zst_file} to Hugging Face...")
+                          try:
+                              api = HfApi(token=hf_token)
+                              api.upload_file(
+                                  path_or_fileobj=zst_file,
+                                  path_in_repo=f"chunks/chunk_{ts}.tar.zst",
+                                  repo_id=REPO_ID,
+                                  repo_type="dataset"
+                              )
+                              print("✅ Hugging Face Upload Complete!")
+                          except Exception as ex:
+                              print(f"❌ HF Upload error: {ex}")
+
+                      # লোকাল ড্রপ
                       os.remove(zst_file)
+                      print(f"📦 Successfully processed chunk {ts}")
               time.sleep(30)
           PYEOF
