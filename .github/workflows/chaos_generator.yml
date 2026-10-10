@@ -39,7 +39,7 @@ jobs:
 
       - name: Build Super-Optimized Native Binary (AVX2 + LTO + Fast-Math)
         run: |
-          RUSTFLAGS="-C target-cpu=native -C opt-level=3 -C lto=fat -C codegen-units=1 -C llvm-args=-ffast-math" cargo build --release
+          RUSTFLAGS="-C target-cpu=native -C opt-level=3 -C lto=fat -C codegen-units=1 " cargo build --release
 
       - name: Run Engine & Dual Push (Google Drive + Hugging Face)
         env:
