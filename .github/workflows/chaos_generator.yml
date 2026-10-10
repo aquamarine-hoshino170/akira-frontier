@@ -1,0 +1,82 @@
+name: Akira-Frontier Autonomous Cloud Engine
+
+on:
+  workflow_dispatch: # টার্মাক্স থেকে সরাসরি ট্রিগার করার জন্য
+  push:
+    branches: [ main ]
+
+jobs:
+  run-engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # সর্বোচ্চ ৬ ঘণ্টা একটানা চলবে
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd
+          pip install huggingface_hub
+
+      - name: Build Optimized Release Binary
+        run: |
+          cargo build --release
+
+      - name: Run Engine & Autonomous Push to Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          # ৪টি সিপিইউ কোরে ইঞ্জিন ব্যাকগ্রাউন্ডে লঞ্চ
+          ./target/release/akira-frontier --universes 4 > engine_run.log 2>&1 &
+          ENGINE_PID=$!
+          echo "[+] Engine launched with PID $ENGINE_PID"
+
+          # পাইথনে অটোনোমাস ওয়াচডগ স্ক্রিপ্ট তৈরি ও রান
+          python3 - << 'PYEOF'
+          import os, time, subprocess
+          from huggingface_hub import HfApi
+
+          HF_TOKEN = os.environ.get("HF_TOKEN")
+          REPO_ID = "aquamarine-hoshino170/akira-frontier-115d"
+          TARGET_FILE = "found.jsonl"
+          THRESHOLD = 50 * 1024 * 1024 # প্রতি ৫০ MB পর পর আপলোড
+
+          api = HfApi(token=HF_TOKEN)
+          os.makedirs("chunks_out", exist_ok=True)
+
+          # রানটাইম লুপ (সর্বোচ্চ ৫.৫ ঘণ্টা ব্যাকগ্রাউন্ডে চলবে)
+          start_time = time.time()
+          while time.time() - start_time < 19800:
+              if os.path.exists(TARGET_FILE):
+                  size = os.path.getsize(TARGET_FILE)
+                  if size >= THRESHOLD:
+                      ts = time.strftime("%Y%m%d_%H%M%S")
+                      snap = f"snap_{ts}.jsonl"
+                      zst_file = f"chunks_out/chunk_{ts}.tar.zst"
+
+                      os.rename(TARGET_FILE, snap)
+                      open(TARGET_FILE, 'a').close()
+
+                      subprocess.run(f"tar -cf - {snap} | zstd -19 -o {zst_file}", shell=True)
+                      os.remove(snap)
+
+                      print(f"[+] Pushing chunk {zst_file} to Hugging Face...")
+                      api.upload_file(
+                          path_or_fileobj=zst_file,
+                          path_in_repo=f"chunks/chunk_{ts}.tar.zst",
+                          repo_id=REPO_ID,
+                          repo_type="dataset"
+                      )
+                      os.remove(zst_file)
+              time.sleep(30)
+          PYEOF
