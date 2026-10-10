@@ -2,8 +2,10 @@ name: Akira-Frontier Dual Cloud Engine (Drive + HF)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
+  workflow_run:
+    workflows: ["Akira-Frontier Dual Cloud Engine (Drive + HF)"]
+    types:
+      - completed
 
 jobs:
   run-dual-engine:
@@ -43,11 +45,9 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          # ইঞ্জিন ব্যাকগ্রাউন্ডে লঞ্চ
           ./target/release/akira-frontier --universes 4 > engine_run.log 2>&1 &
           echo "[+] Akira-Frontier Engine launched in GitHub Cloud."
 
-          # ডুয়াল সিঙ্ক ওয়াচডগ স্ক্রিপ্ট
           python3 - << 'PYEOF'
           import os, time, subprocess
           from huggingface_hub import HfApi
@@ -58,12 +58,7 @@ jobs:
           REPO_ID = "aquamarine-hoshino170/akira-frontier-115d"
           TARGET_FILE = "found.jsonl"
           DRIVE_REMOTE = "aqua:AkiraBackup/chunks"
-          THRESHOLD = 50 * 1024 * 1024  # 50 MB
-
-          if not hf_token:
-              print("⚠️ WARNING: HF_TOKEN is empty or not found in Secrets! Skipping HF upload, focusing on Drive.")
-          else:
-              print("✅ HF_TOKEN detected successfully.")
+          THRESHOLD = 50 * 1024 * 1024
 
           os.makedirs("chunks_out", exist_ok=True)
           start_time = time.time()
@@ -76,19 +71,14 @@ jobs:
                       snap = f"snap_{ts}.jsonl"
                       zst_file = f"chunks_out/chunk_{ts}.tar.zst"
 
-                      # ১. রোটেশন ও কম্প্রেশন
                       os.rename(TARGET_FILE, snap)
                       open(TARGET_FILE, 'a').close()
                       subprocess.run(f"tar -cf - {snap} | zstd -19 -o {zst_file}", shell=True)
                       os.remove(snap)
 
-                      # ২. Google Drive ব্যাকআপ
-                      print(f"[+] Syncing {zst_file} to Google Drive...")
                       subprocess.run(f"rclone copy {zst_file} {DRIVE_REMOTE}/", shell=True)
 
-                      # ৩. Hugging Face ব্যাকআপ (টোকেন থাকলে আপলোড করবে)
                       if hf_token:
-                          print(f"[+] Syncing {zst_file} to Hugging Face...")
                           try:
                               api = HfApi(token=hf_token)
                               api.upload_file(
@@ -97,12 +87,9 @@ jobs:
                                   repo_id=REPO_ID,
                                   repo_type="dataset"
                               )
-                              print("✅ Hugging Face Upload Complete!")
                           except Exception as ex:
-                              print(f"❌ HF Upload error: {ex}")
+                              print(f"HF Error: {ex}")
 
-                      # লোকাল ড্রপ
                       os.remove(zst_file)
-                      print(f"📦 Successfully processed chunk {ts}")
               time.sleep(30)
           PYEOF
