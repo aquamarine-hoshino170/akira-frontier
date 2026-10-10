@@ -2,6 +2,8 @@ name: Akira-Frontier Dual Cloud Engine (Drive + HF)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main ]
   workflow_run:
     workflows: ["Akira-Frontier Dual Cloud Engine (Drive + HF)"]
     types:
