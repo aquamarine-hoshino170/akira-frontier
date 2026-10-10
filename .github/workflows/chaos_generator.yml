@@ -5,7 +5,7 @@ on:
   push:
     branches: [ main ]
   schedule:
-    - cron: '0 */5 * * *'  # প্রতি ৫ ঘণ্টা পর পর অটো-স্টার্ট হবে (24/7 Infinite Cycle)
+    - cron: '0 */5 * * *'
 
 jobs:
   run-dual-engine:
@@ -37,16 +37,16 @@ jobs:
           mkdir -p ~/.config/rclone
           echo "$RCLONE_CONF_DATA" > ~/.config/rclone/rclone.conf
 
-      - name: Build Optimized Release Binary
+      - name: Build Super-Optimized Native Binary (AVX2 + LTO + Fast-Math)
         run: |
-          cargo build --release
+          RUSTFLAGS="-C target-cpu=native -C opt-level=3 -C lto=fat -C codegen-units=1 -C llvm-args=-ffast-math" cargo build --release
 
       - name: Run Engine & Dual Push (Google Drive + Hugging Face)
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           ./target/release/akira-frontier --universes 4 > engine_run.log 2>&1 &
-          echo "[+] Akira-Frontier Engine launched in GitHub Cloud."
+          echo "[+] Super-Optimized Engine launched with AVX2 & mimalloc."
 
           python3 - << 'PYEOF'
           import os, time, subprocess
@@ -63,7 +63,7 @@ jobs:
           os.makedirs("chunks_out", exist_ok=True)
           start_time = time.time()
 
-          while time.time() - start_time < 18000: # ৫ ঘণ্টা একটানা চলবে
+          while time.time() - start_time < 18000:
               if os.path.exists(TARGET_FILE):
                   size = os.path.getsize(TARGET_FILE)
                   if size >= THRESHOLD:

@@ -4,6 +4,7 @@ version = "2.0.0"
 edition = "2021"
 
 [dependencies]
+mimalloc = { version = "0.1", default-features = false }
 clap = { version = "4.4", features = ["derive"] }
 dashmap = "5.5"
 hex = "0.4"
