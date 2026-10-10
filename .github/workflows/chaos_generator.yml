@@ -4,10 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
-  workflow_run:
-    workflows: ["Akira-Frontier Dual Cloud Engine (Drive + HF)"]
-    types:
-      - completed
+  schedule:
+    - cron: '0 */5 * * *'  # প্রতি ৫ ঘণ্টা পর পর অটো-স্টার্ট হবে (24/7 Infinite Cycle)
 
 jobs:
   run-dual-engine:
@@ -65,7 +63,7 @@ jobs:
           os.makedirs("chunks_out", exist_ok=True)
           start_time = time.time()
 
-          while time.time() - start_time < 19800:
+          while time.time() - start_time < 18000: # ৫ ঘণ্টা একটানা চলবে
               if os.path.exists(TARGET_FILE):
                   size = os.path.getsize(TARGET_FILE)
                   if size >= THRESHOLD:
