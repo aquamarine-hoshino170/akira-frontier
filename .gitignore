@@ -1,0 +1,8 @@
+/target
+found.jsonl
+*.log
+*.tar.zst
+staging/
+found_snapshot.jsonl
+dataset_10gb.jsonl
+*.jsonl
